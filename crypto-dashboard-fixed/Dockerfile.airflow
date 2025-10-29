@@ -1,0 +1,25 @@
+FROM apache/airflow:2.8.1
+
+USER root
+
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y \
+        gcc \
+        g++ \
+        default-jdk \
+        postgresql-client \
+        curl && \
+    rm -rf /var/lib/apt/lists/*
+
+USER airflow
+
+# Set JAVA_HOME for Spark
+ENV JAVA_HOME=/usr/lib/jvm/default-java
+ENV PATH="$JAVA_HOME/bin:$PATH"
+ENV PYSPARK_PYTHON=python3
+ENV PYSPARK_DRIVER_PYTHON=python3
+
+# Copy and install only the runtime deps needed by DAGs (do NOT include apache-airflow here)
+COPY requirements-airflow.txt /tmp/requirements-airflow.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-airflow.txt
