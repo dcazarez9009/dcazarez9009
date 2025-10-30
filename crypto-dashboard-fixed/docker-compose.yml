@@ -1,0 +1,146 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: crypto_db
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_SHARED_BUFFERS: 512MB
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 1GB
+      POSTGRES_MAX_CONNECTIONS: 200
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  crypto-dashboard:
+    build: .
+    container_name: crypto_dashboard
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: crypto_admin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  airflow-postgres:
+    image: postgres:15
+    container_name: airflow_db
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - airflow_pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: airflow_webserver
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__WEBSERVER__RBAC: "True"
+      AIRFLOW__CORE__FERNET_KEY: "fernet_please_override"
+      AIRFLOW__CORE__PARALLELISM: 4
+      AIRFLOW__CORE__DAG_CONCURRENCY: 2
+      AIRFLOW__SCHEDULER__CATCHUP_BY_DEFAULT: "False"
+      SPARK_LOCAL_IP: "0.0.0.0"
+      SPARK_MASTER_MEMORY: "1g"
+      SPARK_DRIVER_MEMORY: "1g"
+      SPARK_EXECUTOR_MEMORY: "1g"
+      SPARK_LOCAL_CORES: "2"
+    env_file:
+      - .env
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - .:/opt/project
+      - ./requirements.txt:/opt/airflow/requirements.project.txt
+    ports:
+      - "8081:8080"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 3G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    command: ["bash", "-c", "airflow db upgrade && airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true && airflow webserver"]
+    restart: unless-stopped
+
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: airflow_scheduler
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__FERNET_KEY: "fernet_please_override"
+      AIRFLOW__CORE__PARALLELISM: 4
+      AIRFLOW__CORE__DAG_CONCURRENCY: 2
+      AIRFLOW__SCHEDULER__CATCHUP_BY_DEFAULT: "False"
+      SPARK_LOCAL_IP: "0.0.0.0"
+      SPARK_MASTER_MEMORY: "1g"
+      SPARK_DRIVER_MEMORY: "1g"
+      SPARK_EXECUTOR_MEMORY: "1g"
+      SPARK_LOCAL_CORES: "2"
+    env_file:
+      - .env
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - .:/opt/project
+      - ./requirements.txt:/opt/airflow/requirements.project.txt
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 3G
+    command: ["bash", "-c", "airflow db upgrade && airflow scheduler"]
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  airflow_pg_data:
